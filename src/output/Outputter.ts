@@ -2,9 +2,12 @@ import { EventEmitter } from "events";
 import loadEllipses from "../svgs/loadEllipses";
 import loadSpinner from "../svgs/loadSpinner";
 import FileAppender from "./FileAppender";
-import { App, Component, MarkdownRenderer, MarkdownView, normalizePath, setIcon } from "obsidian";
+import { App, Component, MarkdownRenderer, MarkdownView, normalizePath, setIcon, MarkdownPostProcessorContext } from "obsidian";
 import { ExecutorSettings } from "../settings/Settings";
 import { ChildProcess } from "child_process";
+import { parseSqlOutput, SqlResultData } from "./SqlResultParser";
+import { renderSqlTable, destroySqlTable } from "./SqlTableRenderer";
+import type { LanguageId } from "../main";
 
 export const TOGGLE_HTML_SIGIL = `TOGGLE_HTML_${Math.random().toString(16).substring(2)}`;
 
@@ -34,11 +37,29 @@ export class Outputter extends EventEmitter {
 	app: App;
 	srcFile: string;
 
-	constructor(codeBlock: HTMLElement, settings: ExecutorSettings, view: MarkdownView, app: App, srcFile: string) {
+	/** The language of the code block */
+	language: LanguageId | undefined;
+
+	/** Container for SQL VTable rendering */
+	private sqlTableContainer: HTMLElement | null = null;
+
+	/** Accumulated SQL output buffer */
+	private sqlOutputBuffer: string = '';
+
+	/** The index of the code block in the current processing context */
+	private blockIndex: number;
+
+	/** Post-processor context for identifying block location */
+	private context: MarkdownPostProcessorContext | undefined;
+
+	constructor(codeBlock: HTMLElement, settings: ExecutorSettings, view: MarkdownView, app: App, srcFile: string, language?: LanguageId, context?: MarkdownPostProcessorContext, blockIndex: number = 0) {
 		super();
 		this.settings = settings;
 		this.app = app;
 		this.srcFile = srcFile;
+		this.language = language;
+		this.context = context;
+		this.blockIndex = blockIndex;
 
 		this.inputState = this.settings.allowInput ? "INACTIVE" : "NOT_DOING";
 		this.codeBlockElement = codeBlock;
@@ -70,6 +91,14 @@ export class Outputter extends EventEmitter {
 		this.closeInput();
 		this.inputState = "INACTIVE";
 
+		// Clean up SQL VTable
+		if (this.sqlTableContainer) {
+			destroySqlTable(this.sqlTableContainer);
+			this.sqlTableContainer.remove();
+			this.sqlTableContainer = null;
+		}
+		this.sqlOutputBuffer = '';
+
 		// clear output block in file
 		this.saveToFile.clearOutput();
 
@@ -94,12 +123,199 @@ export class Outputter extends EventEmitter {
 	}
 
 	/**
-	 * Add a segment of stdout data to the outputter
+	 * Add a segment of stdout data to the outputter.
+	 * For SQL language, accumulates output in buffer.
 	 * @param text The stdout data in question
 	 */
 	write(text: string) {
+		if (this.language === 'sql') {
+			// For SQL, accumulate output in buffer
+			this.sqlOutputBuffer += text;
+			return;
+		}
 		this.processSigilsAndWriteText(text);
+	}
 
+	/**
+	 * Finalize SQL output: parse the accumulated buffer and render as VTable.
+	 * Called when the SQL execution is complete.
+	 */
+	finalizeSqlOutput() {
+		const rawOutput = this.sqlOutputBuffer;
+		this.sqlOutputBuffer = '';
+
+		if (!rawOutput || rawOutput.trim().length === 0) return;
+
+		const parsed = parseSqlOutput(rawOutput);
+
+		if (parsed && parsed.columns.length > 0 && parsed.records.length > 0) {
+			// Persist SQL results directly to the note file.
+			// This will insert a ```vtable block which handles its own rendering.
+			this.persistSqlResultToFile(parsed);
+		} else {
+			// Fallback: render as plain text if parsing fails
+			this.processSigilsAndWriteText(rawOutput);
+		}
+	}
+
+	/**
+	 * Persist SQL result data to the markdown file by directly modifying the file content.
+	 * Uses Vault API instead of FileAppender to work reliably in both Live Preview and Reading View.
+	 */
+	/**
+	 * Persist SQL result data to the markdown file.
+	 * Prioritizes using the Editor API if the file is currently active, 
+	 * falling back to direct Vault API modification otherwise.
+	 */
+	private async persistSqlResultToFile(data: SqlResultData) {
+		console.log(`[Execute Code] Persisting SQL result to ${this.srcFile}`);
+		try {
+			const jsonPayload = JSON.stringify(data);
+			const vtableBlock = `\n\`\`\`vtable\n${jsonPayload}\n\`\`\``;
+
+			// Try to find the active markdown editor for this file
+			const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+			const isSameFile = activeView && activeView.file && activeView.file.path === this.srcFile;
+
+			if (isSameFile) {
+				console.log(`[Execute Code] Using Editor API for persistence`);
+				const editor = activeView.editor;
+				
+				let sectionInfo = this.context ? this.context.getSectionInfo(this.codeBlockElement) : null;
+				if (!sectionInfo && this.context) {
+					sectionInfo = this.context.getSectionInfo(this.codeBlockElement.parentElement) || 
+								  this.context.getSectionInfo(this.codeBlockElement.closest('pre'));
+				}
+
+				let insertLine = -1;
+				if (sectionInfo) {
+					insertLine = sectionInfo.lineEnd;
+				} else {
+					insertLine = this.findCodeBlockEndLine(editor.getValue());
+				}
+
+				if (insertLine !== -1) {
+					// Check for existing vtable block right after
+					const nextLine = editor.getLine(insertLine + 1);
+					const hasExistingVTable = nextLine && nextLine.trim() === '```vtable';
+
+					if (hasExistingVTable) {
+						let endLine = insertLine + 1;
+						while (endLine < editor.lineCount()) {
+							if (editor.getLine(endLine).trim() === '```' && endLine > insertLine + 1) {
+								break;
+							}
+							endLine++;
+						}
+						editor.replaceRange(vtableBlock, { line: insertLine + 1, ch: 0 }, { line: endLine, ch: 3 });
+					} else {
+						editor.replaceRange(vtableBlock, { line: insertLine, ch: editor.getLine(insertLine).length });
+					}
+					return;
+				}
+			}
+
+			// Fallback: Vault API
+			console.log(`[Execute Code] Using Vault API for persistence (fallback)`);
+			const file = this.app.vault.getAbstractFileByPath(this.srcFile);
+			if (!file) return;
+
+			const content = await this.app.vault.read(file as any);
+			const lines = content.split('\n');
+			const codeBlockEnd = this.findCodeBlockEndLine(content);
+
+			if (codeBlockEnd === -1) return;
+
+			let existingVTableEnd = -1;
+			let i = codeBlockEnd + 1;
+			while (i < lines.length && lines[i].trim() === '') i++;
+			if (i < lines.length && lines[i].trim() === '```vtable') {
+				for (let k = i + 1; k < lines.length; k++) {
+					if (lines[k].trim() === '```') {
+						existingVTableEnd = k;
+						break;
+					}
+				}
+				if (existingVTableEnd !== -1) {
+					const before = lines.slice(0, codeBlockEnd + 1).join('\n');
+					const after = lines.slice(existingVTableEnd + 1).join('\n');
+					await this.app.vault.modify(file as any, before + vtableBlock + (after ? '\n' + after : ''));
+					return;
+				}
+			}
+
+			const before = lines.slice(0, codeBlockEnd + 1).join('\n');
+			const after = lines.slice(codeBlockEnd + 1).join('\n');
+			await this.app.vault.modify(file as any, before + vtableBlock + (after ? '\n' + after : ''));
+
+		} catch (e) {
+			console.error('[Execute Code] Failed to persist SQL result:', e);
+		}
+	}
+
+	/**
+	 * Helper to find the end line index of the relevant code block.
+	 */
+	private findCodeBlockEndLine(content: string): number {
+		const lines = content.split('\n');
+		const srcText = this.codeBlockElement.textContent || '';
+		const firstLine = srcText.trim().split('\n').find(l => l.trim().length > 0) || '';
+
+		let occurrencesFound = 0;
+		for (let i = 0; i < lines.length; i++) {
+			// Support standard sql and run-sql
+			if (lines[i].trim().match(/^```\s*(run-)?sql/i)) {
+				let j = i + 1;
+				let found = false;
+				while (j < lines.length && !lines[j].trim().startsWith('```')) {
+					if (firstLine && lines[j].includes(firstLine.trim())) found = true;
+					j++;
+				}
+				if (found || !firstLine) {
+					if (occurrencesFound === this.blockIndex) return j;
+					occurrencesFound++;
+				}
+			}
+		}
+		return -1;
+	}
+
+	/**
+	 * Render parsed SQL data as a VTable.
+	 */
+	private renderSqlVTable(data: SqlResultData) {
+		// Ensure output infrastructure exists
+		if (!this.clearButton) this.addClearButton();
+		if (!this.outputElement) this.addOutputElement();
+
+		this.outputElement.style.display = "block";
+		this.clearButton.className = "clear-button";
+		this.hadPreviouslyPrinted = true;
+
+		// Create SQL table container
+		this.sqlTableContainer = document.createElement('div');
+		this.sqlTableContainer.className = 'sql-vtable-wrapper';
+
+		// Insert before input element if it exists, else append
+		if (this.inputElement) {
+			this.outputElement.insertBefore(this.sqlTableContainer, this.inputElement);
+		} else {
+			this.outputElement.appendChild(this.sqlTableContainer);
+		}
+
+		// Detect dark mode
+		const isDarkMode = document.body.classList.contains('theme-dark');
+
+		// Render the table
+		renderSqlTable(data, this.sqlTableContainer, isDarkMode);
+	}
+
+	/**
+	 * Render SQL result from persisted JSON data.
+	 * Used when restoring results from a saved note.
+	 */
+	renderSqlFromPersistedData(data: SqlResultData) {
+		this.renderSqlVTable(data);
 	}
 
 
