@@ -1,6 +1,7 @@
 import esbuild from "esbuild";
 import process from "process";
 import builtins from 'builtin-modules'
+import { copyFileSync } from 'fs';
 
 const banner =
 `/*
@@ -49,4 +50,7 @@ esbuild.build({
 	sourcemap: prod ? false : 'inline',
 	treeShaking: true,
 	outfile: 'main.js',
+}).then(() => {
+	// Copy styles.css to root for Obsidian plugin deployment
+	copyFileSync('src/styles.css', 'styles.css');
 }).catch(() => process.exit(1));
