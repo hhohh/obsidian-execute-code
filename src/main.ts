@@ -1,4 +1,6 @@
 import { App, Component, MarkdownRenderer, MarkdownView, Plugin, } from 'obsidian';
+import type { SqlResultData } from './output/SqlResultParser';
+import { renderSqlTable, destroySqlTable } from './output/SqlTableRenderer';
 
 import type { ExecutorSettings } from "./settings/Settings";
 import { DEFAULT_SETTINGS } from "./settings/Settings";
@@ -48,7 +50,52 @@ export default class ExecuteCodePlugin extends Plugin {
 		}
 		runButton.addInOpenFiles(context);
 		this.registerMarkdownPostProcessor((element, _context) => {
-			runButton.addToAllCodeBlocks(element, _context.sourcePath, this.app.workspace.getActiveViewOfType(MarkdownView), context);
+			runButton.addToAllCodeBlocks(element, _context.sourcePath, this.app.workspace.getActiveViewOfType(MarkdownView), context, _context);
+		});
+
+		// Custom VTable block processor for persistence
+		this.registerMarkdownCodeBlockProcessor("vtable", (src, el, ctx) => {
+			try {
+				const data: SqlResultData = JSON.parse(src);
+				if (data && data.columns && data.records) {
+					const container = el.createDiv({ cls: 'sql-vtable-wrapper' });
+					const isDarkMode = document.body.classList.contains('theme-dark');
+					
+					// Deletion callback for persisted blocks
+					const onDelete = async () => {
+						const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+						if (activeView && activeView.file && activeView.file.path === ctx.sourcePath) {
+							const editor = activeView.editor;
+							const section = ctx.getSectionInfo(el);
+							if (section) {
+								// Delete the block lines
+								editor.replaceRange('', 
+									{ line: section.lineStart, ch: 0 }, 
+									{ line: section.lineEnd + 1, ch: 0 }
+								);
+								return;
+							}
+						}
+						
+						// Fallback: Vault API
+						const file = this.app.vault.getAbstractFileByPath(ctx.sourcePath);
+						if (file) {
+							const content = await this.app.vault.read(file as any);
+							const lines = content.split('\n');
+							const section = ctx.getSectionInfo(el);
+							if (section) {
+								lines.splice(section.lineStart, section.lineEnd - section.lineStart + 1);
+								await this.app.vault.modify(file as any, lines.join('\n'));
+							}
+						}
+					};
+
+					renderSqlTable(data, container, isDarkMode, onDelete);
+				}
+			} catch (e) {
+				console.error('Failed to render persisted vtable:', e);
+				el.createEl('pre').createEl('code').setText(src);
+			}
 		});
 
 		// live preview renderers

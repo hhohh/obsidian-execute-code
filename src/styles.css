@@ -37,14 +37,59 @@ settings:
 */
 
 button.run-code-button {
-	display: none;
+	display: inline-flex;
+	align-items: center;
 	color: var(--text-muted);
-	position: absolute;
-	bottom: 0;
-	right: 0;
-	margin: 5px;
-	padding: 5px 20px 5px 20px;
+	padding: 3px 10px;
+	font-size: 12px;
+	border: none;
+	background: transparent;
+	cursor: pointer;
+	border-radius: 4px;
+	transition: color 0.15s, background 0.15s;
 	z-index: 100;
+}
+
+button.run-code-button:hover {
+	color: var(--text-normal);
+	background: var(--background-modifier-hover);
+}
+
+/* Code block toolbar (top-right, Copy + Run) */
+.code-block-toolbar {
+	display: none;
+	position: absolute;
+	top: 4px;
+	right: 4px;
+	z-index: 100;
+	gap: 2px;
+	align-items: center;
+	background: var(--background-secondary);
+	border-radius: 6px;
+	padding: 2px;
+	box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+}
+
+pre:hover .code-block-toolbar {
+	display: flex;
+}
+
+.code-toolbar-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 4px 6px;
+	border: none;
+	background: transparent;
+	color: var(--text-muted);
+	cursor: pointer;
+	border-radius: 4px;
+	transition: color 0.15s, background 0.15s;
+}
+
+.code-toolbar-btn:hover {
+	color: var(--text-normal);
+	background: var(--background-modifier-hover);
 }
 
 button.clear-button {
@@ -58,7 +103,6 @@ button.clear-button {
 	z-index: 100;
 }
 
-pre:hover .run-code-button,
 pre:hover .clear-button {
 	display: block;
 }
@@ -273,4 +317,102 @@ input.interactive-stdin {
 /* Try to keep description of cmd arguments in LaTeX settings on the same line. */
 code.selectable-description-text {
 	white-space: nowrap;
+}
+
+/* ============================================
+   SQL VTable Renderer Styles
+   ============================================ */
+
+.sql-vtable-wrapper {
+	margin: 8px 0 4px 0;
+	border-radius: 6px;
+	overflow: hidden;
+	border: 1px solid var(--background-modifier-border);
+}
+
+/* Header bar: info left, export buttons right */
+.sql-vtable-header-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 4px 10px;
+	background: var(--background-secondary);
+	border-bottom: 1px solid var(--background-modifier-border);
+	gap: 8px;
+	min-height: 28px;
+}
+
+.sql-vtable-info {
+	font-size: 11px;
+	color: var(--text-muted);
+	font-family: var(--font-monospace);
+	white-space: nowrap;
+}
+
+.sql-vtable-btn-group {
+	display: flex;
+	gap: 4px;
+	align-items: center;
+}
+
+.sql-vtable-export-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	font-size: 11px;
+	padding: 2px 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	background: var(--background-primary);
+	color: var(--text-muted);
+	cursor: pointer;
+	transition: all 0.15s ease;
+	white-space: nowrap;
+}
+
+.sql-vtable-export-btn:hover {
+	background: var(--interactive-hover);
+	border-color: var(--interactive-accent);
+	color: var(--interactive-accent);
+}
+
+.sql-vtable-export-btn:active {
+	transform: scale(0.97);
+}
+
+.sql-vtable-export-btn svg {
+	flex-shrink: 0;
+}
+
+.sql-vtable-container {
+	min-height: 60px;
+	overflow: hidden;
+}
+
+/* Hide raw persisted output when VTable is restored */
+.sql-vtable-restored + pre.language-output,
+pre.language-output:has(+ .sql-vtable-restored) {
+	display: none !important;
+}
+
+/* Dark mode refinements */
+.theme-dark .sql-vtable-wrapper {
+	border-color: #3e3e3e;
+}
+
+.theme-dark .sql-vtable-header-bar {
+	background: #1e1e1e;
+	border-bottom-color: #3e3e3e;
+}
+
+.theme-dark .sql-vtable-export-btn {
+	background: #2d2d2d;
+	border-color: #3e3e3e;
+	color: #a0a0a0;
+}
+
+.theme-dark .sql-vtable-export-btn:hover {
+	background: #3e3e3e;
+	border-color: #6496ff;
+	color: #6496ff;
 }

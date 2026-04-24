@@ -1,4 +1,4 @@
-import { App, Workspace, MarkdownView } from 'obsidian';
+import { App, Workspace, MarkdownView, MarkdownPostProcessorContext } from 'obsidian';
 import ExecutorContainer from './ExecutorContainer';
 import { LanguageId, PluginContext, supportedLanguages } from './main';
 import { Outputter } from './output/Outputter';
@@ -107,20 +107,26 @@ export function addInOpenFiles(plugin: PluginContext) {
  * @param file An identifier for the currently showed note
  * @param view The current markdown view
  * @param plugin Contains context needed for execution.
+ * @param context The post-processor context.
 */
-export function addToAllCodeBlocks(element: HTMLElement, file: string, view: MarkdownView, plugin: PluginContext) {
-    Array.from(element.getElementsByTagName("code"))
-        .forEach((codeBlock: HTMLElement) => addToCodeBlock(codeBlock, file, view, plugin));
+export function addToAllCodeBlocks(element: HTMLElement, file: string, view: MarkdownView, plugin: PluginContext, context?: MarkdownPostProcessorContext) {
+    const codeBlocks = Array.from(element.getElementsByTagName("code"));
+    codeBlocks.forEach((codeBlock: HTMLElement, index: number) => {
+        addToCodeBlock(element, codeBlock, file, view, plugin, context, index);
+    });
 }
 
 /**
  * Processes a code block to add execution capabilities. Ensures buttons aren't duplicated on already processed blocks.
+ * @param element The parent section element
  * @param codeBlock The code block element to process
  * @param file Path to the current markdown file
  * @param view The current markdown view
  * @param plugin Contains context needed for execution.
+ * @param context The post-processor context.
+ * @param blockIndex The index of the code block in the current processing context.
  */
-function addToCodeBlock(codeBlock: HTMLElement, file: string, view: MarkdownView, plugin: PluginContext) {
+function addToCodeBlock(element: HTMLElement, codeBlock: HTMLElement, file: string, view: MarkdownView, plugin: PluginContext, context: MarkdownPostProcessorContext, blockIndex: number = 0) {
     if (codeBlock.className.match(/^language-\{\w+/i)) {
         codeBlock.className = codeBlock.className.replace(/^language-\{(\w+)/i, "language-$1 {");
         codeBlock.parentElement.className = codeBlock.className;
@@ -145,10 +151,31 @@ function addToCodeBlock(codeBlock: HTMLElement, file: string, view: MarkdownView
     const hasBlockBeenButtonifiedAlready = parent.classList.contains(codeBlockHasButtonClass);
     if (!isLanguageSupported || hasBlockBeenButtonifiedAlready) return;
 
-    const outputter = new Outputter(codeBlock, plugin.settings, view, plugin.app, file);
+    const outputter = new Outputter(codeBlock, plugin.settings, view, plugin.app, file, canonicalLanguage, context, blockIndex);
     parent.classList.add(codeBlockHasButtonClass);
+
+    // Create toolbar container at top-right with Copy + Run buttons
+    const toolbar = document.createElement('div');
+    toolbar.className = 'code-block-toolbar';
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'code-toolbar-btn code-copy-btn';
+    copyBtn.title = 'Copy code';
+    copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    copyBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(srcCode).then(() => {
+            copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+            setTimeout(() => {
+                copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+            }, 1500);
+        });
+    });
+
     const button = createButton();
-    pre.appendChild(button);
+
+    toolbar.appendChild(copyBtn);
+    toolbar.appendChild(button);
+    pre.appendChild(toolbar);
 
     const block: CodeBlockContext = {
         srcCode: srcCode,
@@ -204,6 +231,11 @@ function runCode(cmd: string, cmdArgs: string, ext: string, block: CodeBlockCont
         if (!useShell) {
             block.outputter.closeInput();
             block.outputter.finishBlock();
+        }
+
+        // For SQL, finalize the output to render VTable
+        if (block.language === 'sql') {
+            block.outputter.finalizeSqlOutput();
         }
     });
 }
