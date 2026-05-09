@@ -68,6 +68,11 @@ button.run-code-button:hover {
 	border-radius: 6px;
 	padding: 2px;
 	box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+	pointer-events: none;
+}
+
+.code-block-toolbar > * {
+	pointer-events: auto;
 }
 
 pre:hover .code-block-toolbar {

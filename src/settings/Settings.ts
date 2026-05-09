@@ -1,5 +1,10 @@
 import { LanguageId } from "src/main";
 
+/** Convert a language ID like 'sql-duckdb' to camelCase prefix 'sqlDuckdb' for settings access */
+export function getLangSettingsPrefix(lang: LanguageId): string {
+	return lang.replace(/-([a-z])/g, (_: string, c: string) => c.toUpperCase());
+}
+
 /**
  * Interface that contains all the settings for the extension.
  */
@@ -164,6 +169,12 @@ export interface ExecutorSettings {
 	sqlPath: string;
 	sqlArgs: string;
 	sqlInject: string;
+	sqlDuckdbPath: string;
+	sqlDuckdbArgs: string;
+	sqlDuckdbInject: string;
+	sqlOdpsPath: string;
+	sqlOdpsArgs: string;
+	sqlOdpsInject: string;
 	applescriptPath: string;
 	applescriptArgs: string;
 	applescriptFileExtension: string;
@@ -204,6 +215,8 @@ export interface ExecutorSettings {
 	cInteractive: boolean;
 	rubyInteractive: boolean;
 	sqlInteractive: boolean;
+	sqlDuckdbInteractive: boolean;
+	sqlOdpsInteractive: boolean;
 	octaveInteractive: boolean;
 	maximaInteractive: boolean;
 	applescriptInteractive: boolean;
@@ -365,6 +378,12 @@ export const DEFAULT_SETTINGS: ExecutorSettings = {
 	sqlPath: "psql",
 	sqlArgs: "-d <database> -U <user> -f",
 	sqlInject: "",
+	sqlDuckdbPath: "duckdb",
+	sqlDuckdbArgs: "-csv",
+	sqlDuckdbInject: "",
+	sqlOdpsPath: "odpscmd",
+	sqlOdpsArgs: "-f",
+	sqlOdpsInject: "",
 	octavePath: "octave",
 	octaveArgs: "-q",
 	octaveFileExtension: "m",
@@ -416,6 +435,8 @@ export const DEFAULT_SETTINGS: ExecutorSettings = {
 	racketInteractive: false,
 	rubyInteractive: false,
 	sqlInteractive: false,
+	sqlDuckdbInteractive: false,
+	sqlOdpsInteractive: false,
 	octaveInteractive: false,
 	maximaInteractive: false,
 	applescriptInteractive: false,

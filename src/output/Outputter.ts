@@ -5,7 +5,7 @@ import FileAppender from "./FileAppender";
 import { App, Component, MarkdownRenderer, MarkdownView, normalizePath, setIcon, MarkdownPostProcessorContext } from "obsidian";
 import { ExecutorSettings } from "../settings/Settings";
 import { ChildProcess } from "child_process";
-import { parseSqlOutput, SqlResultData } from "./SqlResultParser";
+import { parseSqlOutput, SqlResultData, sqlResultToCsv } from "./SqlResultParser";
 import { destroySqlTable } from "./SqlTableRenderer";
 import type { LanguageId } from "../main";
 
@@ -143,7 +143,7 @@ export class Outputter extends EventEmitter {
 	 * @param text The stdout data in question
 	 */
 	write(text: string) {
-		if (this.language === 'sql') {
+		if (this.language === 'sql' || this.language === 'sql-duckdb' || this.language === 'sql-odps') {
 			// For SQL, accumulate output in buffer
 			this.sqlOutputBuffer += text;
 			return;
@@ -196,11 +196,12 @@ export class Outputter extends EventEmitter {
 
 		let firstMatch = -1;
 		let bestMatch = -1;
+		let matchCountInSection = 0;
 
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i].trim();
 			// 匹配 SQL 代码块开始标记（支持 run-sql, sql, duckdb）
-			if (line.match(/^```\s*(run-)?sql/i) || line.match(/^```\s*duckdb/i)) {
+			if (line.match(/^```\s*(run-)?(sql|sql-duckdb|sql-odps)/i) || line.match(/^```\s*duckdb/i)) {
 				let j = i + 1;
 				let blockSource = '';
 				while (j < lines.length && !lines[j].trim().startsWith('```')) {
@@ -211,9 +212,13 @@ export class Outputter extends EventEmitter {
 
 				if (blockSource === targetSource) {
 					if (firstMatch === -1) firstMatch = j;
-					// 如果该块起始位置在 sectionStartLine 之后，优先采用（处理 duplicate 代码）
+					// 根据 blockIndex 精确匹配 section 内的第几个同名块
 					if (i >= this.sectionStartLine) {
-						bestMatch = j;
+						if (matchCountInSection === this.blockIndex) {
+							bestMatch = j;
+							break;
+						}
+						matchCountInSection++;
 					}
 				}
 
@@ -227,8 +232,8 @@ export class Outputter extends EventEmitter {
 	private async persistSqlResultToFile(data: SqlResultData) {
 		console.log(`[Execute Code] Persisting SQL result`);
 		try {
-			const jsonPayload = JSON.stringify(data);
-			const vtableBlock = `\n\`\`\`vtable\n${jsonPayload}\n\`\`\``;
+			const csvPayload = sqlResultToCsv(data);
+			const vtableBlock = `\n\`\`\`vtable\n${csvPayload}\n\`\`\``;
 
 			// 通过索引获取精确的结束行号
 			let insertLine = await this.findCodeBlockEndLineByIndex();

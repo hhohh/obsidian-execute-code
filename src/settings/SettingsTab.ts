@@ -28,8 +28,10 @@ import makeRacketSettings from "./per-lang/makeRacketSettings.js";
 import makeShellSettings from "./per-lang/makeShellSettings";
 import makeBatchSettings from "./per-lang/makeBatchSettings";
 import makeTsSettings from "./per-lang/makeTsSettings";
-import { ExecutorSettings } from "./Settings";
+import { ExecutorSettings, getLangSettingsPrefix } from "./Settings";
 import makeSQLSettings from "./per-lang/makeSQLSettings";
+import makeSQLDuckdbSettings from "./per-lang/makeSQLDuckdbSettings";
+import makeSQLOdpsSettings from "./per-lang/makeSQLOdpsSettings";
 import makeOctaviaSettings from "./per-lang/makeOctaveSettings";
 import makeMaximaSettings from "./per-lang/makeMaximaSettings";
 import makeApplescriptSettings from "./per-lang/makeApplescriptSettings";
@@ -165,6 +167,8 @@ export class SettingsTab extends PluginSettingTab {
 		makeFSharpSettings(this, this.makeContainerFor("fsharp"));
 		makeRubySettings(this, this.makeContainerFor("ruby"));
 		makeSQLSettings(this, this.makeContainerFor("sql"));
+		makeSQLDuckdbSettings(this, this.makeContainerFor("sql-duckdb"));
+		makeSQLOdpsSettings(this, this.makeContainerFor("sql-odps"));
 		makeOctaviaSettings(this, this.makeContainerFor("octave"));
 		makeMaximaSettings(this, this.makeContainerFor("maxima"));
 		makeApplescriptSettings(this, this.makeContainerFor("applescript"));
@@ -206,18 +210,18 @@ export class SettingsTab extends PluginSettingTab {
 
 	makeInjectSetting(containerEl: HTMLElement, language: LanguageId) {
 		const languageAlt = DISPLAY_NAMES[language];
+		const injectKey = (getLangSettingsPrefix(language) + 'Inject') as keyof ExecutorSettings;
 
 		new Setting(containerEl)
 			.setName(`Inject ${languageAlt} code`)
 			.setDesc(`Code to add to the top of every ${languageAlt} code block before running.`)
 			.setClass('settings-code-input-box')
 			.addTextArea(textarea => {
-				// @ts-ignore
-				const val = this.plugin.settings[`${language}Inject` as keyof ExecutorSettings as string]
+				const val = this.plugin.settings[injectKey] as string;
 				return textarea
 					.setValue(val)
 					.onChange(async (value) => {
-						(this.plugin.settings[`${language}Inject` as keyof ExecutorSettings] as string) = value;
+						(this.plugin.settings[injectKey] as string) = value;
 						console.log(`${language} inject set to ${value}`);
 						await this.plugin.saveSettings();
 					});

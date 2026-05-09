@@ -30,6 +30,8 @@ export const DISPLAY_NAMES: Record<LanguageId, string> = {
 	dart: "Dart",
 	lean: "Lean",
 	sql: "SQL",
+	"sql-duckdb": "SQL-DuckDB",
+	"sql-odps": "SQL-ODPS",
 	octave: "Octave",
 	maxima: "Maxima",
     applescript: "Applescript",

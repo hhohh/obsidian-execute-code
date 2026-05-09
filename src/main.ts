@@ -1,5 +1,6 @@
 import { App, Component, MarkdownRenderer, MarkdownView, Plugin, } from 'obsidian';
 import type { SqlResultData } from './output/SqlResultParser';
+import { parseCsvText } from './output/SqlResultParser';
 import { renderSqlTable, destroySqlTable } from './output/SqlTableRenderer';
 
 import type { ExecutorSettings } from "./settings/Settings";
@@ -20,7 +21,7 @@ import * as runButton from './RunButton';
 export const languageAliases = ["javascript", "typescript", "bash", "csharp", "wolfram", "nb", "wl", "hs", "py", "tex"] as const;
 export const canonicalLanguages = ["js", "ts", "cs", "latex", "lean", "lua", "python", "cpp", "prolog", "shell", "groovy", "r",
 	"go", "rust", "java", "powershell", "kotlin", "mathematica", "haskell", "scala", "swift", "racket", "fsharp", "c", "dart",
-	"ruby", "batch", "sql", "octave", "maxima", "applescript", "zig", "ocaml", "php"] as const;
+	"ruby", "batch", "sql", "sql-duckdb", "sql-odps", "octave", "maxima", "applescript", "zig", "ocaml", "php"] as const;
 export const supportedLanguages = [...languageAliases, ...canonicalLanguages] as const;
 export type LanguageId = typeof canonicalLanguages[number];
 
@@ -56,7 +57,11 @@ export default class ExecuteCodePlugin extends Plugin {
 		// Custom VTable block processor for persistence
 		this.registerMarkdownCodeBlockProcessor("vtable", (src, el, ctx) => {
 			try {
-				const data: SqlResultData = JSON.parse(src);
+				// Try CSV format (new), fall back to JSON (legacy)
+				let data: SqlResultData | null = parseCsvText(src);
+				if (!data) {
+					try { data = JSON.parse(src); } catch {}
+				}
 				if (data && data.columns && data.records) {
 					const container = el.createDiv({ cls: 'sql-vtable-wrapper' });
 					const isDarkMode = document.body.classList.contains('theme-dark');
@@ -102,7 +107,14 @@ export default class ExecuteCodePlugin extends Plugin {
 		supportedLanguages.forEach(l => {
 			console.debug(`Registering renderer for ${l}.`)
 			this.registerMarkdownCodeBlockProcessor(`run-${l}`, async (src, el, _ctx) => {
-				await MarkdownRenderer.render(this.app, '```' + l + '\n' + src + (src.endsWith('\n') ? '' : '\n') + '```', el, _ctx.sourcePath, new Component());
+				// Render sql-duckdb and sql-odps as 'sql' for syntax highlighting
+				const renderLang = (l === 'sql-duckdb' || l === 'sql-odps') ? 'sql' : l;
+				await MarkdownRenderer.render(this.app, '```' + renderLang + '\n' + src + (src.endsWith('\n') ? '' : '\n') + '```', el, _ctx.sourcePath, new Component());
+				// Preserve the original language for button detection
+				if (l === 'sql-duckdb' || l === 'sql-odps') {
+					const codeBlock = el.querySelector('code');
+					if (codeBlock) codeBlock.setAttribute('data-exec-lang', l);
+				}
 			});
 		});
 

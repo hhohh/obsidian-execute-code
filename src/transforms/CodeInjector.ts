@@ -1,6 +1,6 @@
 import type {App} from "obsidian";
 import {MarkdownView, Notice} from "obsidian";
-import {ExecutorSettings} from "src/settings/Settings";
+import {ExecutorSettings, getLangSettingsPrefix} from "src/settings/Settings";
 import {getCodeBlockLanguage, getLanguageAlias, transformMagicCommands} from './TransformCode';
 import {getArgs} from "src/CodeBlockArgs";
 import type {LanguageId} from "src/main";
@@ -51,8 +51,8 @@ export class CodeInjector {
 		// Is await necessary here? Some object variables get changed in this call -> await probably necessary
 		await this.parseFile(activeView.data, srcCode, language);
 
-		const realLanguage = /[^-]*$/.exec(language)[0];
-		const globalInject = this.settings[`${realLanguage}Inject` as keyof ExecutorSettings];
+		const settingsPrefix = getLangSettingsPrefix(language);
+		const globalInject = this.settings[`${settingsPrefix}Inject` as keyof ExecutorSettings];
 		let injectedCode = `${this.namedImportSrcCode}\n${srcCode}`;
 		if (!this.mainArgs.ignore)
 			injectedCode = `${globalInject}\n${this.prependSrcCode}\n${injectedCode}\n${this.appendSrcCode}`;
