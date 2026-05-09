@@ -99,6 +99,34 @@ function parseCsvFormat(rawOutput: string): SqlResultData | null {
 }
 
 /**
+ * Serialize SqlResultData to a CSV string.
+ * First line is column headers, subsequent lines are data rows.
+ * Handles proper escaping of fields containing commas, double-quotes, or newlines.
+ */
+export function sqlResultToCsv(data: SqlResultData): string {
+	const escapeCell = (val: string) => {
+		if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+			return `"${val.replace(/"/g, '""')}"`;
+		}
+		return val;
+	};
+
+	const header = data.columns.map(escapeCell).join(',');
+	const rows = data.records.map(record =>
+		data.columns.map(col => escapeCell(record[col] || '')).join(',')
+	);
+	return [header, ...rows].join('\n');
+}
+
+/**
+ * Parse clean CSV text back into SqlResultData.
+ * Used to reconstruct data from persisted CSV vtable blocks.
+ */
+export function parseCsvText(csvText: string): SqlResultData | null {
+	return parseCsvFormat(csvText);
+}
+
+/**
  * Parse a single CSV line, respecting quoted fields.
  * Handles: "field with, comma", "field with ""quotes""", normal field
  */

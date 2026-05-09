@@ -6,6 +6,7 @@ import PrologExecutor from "./executors/PrologExecutor";
 import PythonExecutor from "./executors/python/PythonExecutor";
 import CppExecutor from './executors/CppExecutor';
 import ExecuteCodePlugin, {LanguageId} from "./main";
+import { getLangSettingsPrefix, ExecutorSettings } from "./settings/Settings";
 import RExecutor from "./executors/RExecutor.js";
 import CExecutor from "./executors/CExecutor";
 import FSharpExecutor from "./executors/FSharpExecutor";
@@ -94,7 +95,8 @@ export default class ExecutorContainer extends EventEmitter implements Iterable<
 	 */
 	private createExecutorFor(file: string, language: LanguageId, needsShell: boolean) {
 		// Interactive language executor
-		if (this.plugin.settings[`${language}Interactive`]) {
+		const interactiveKey = (getLangSettingsPrefix(language) + 'Interactive') as keyof ExecutorSettings;
+		if (this.plugin.settings[interactiveKey]) {
 			if (!(language in interactiveExecutors))
 				throw new Error(`Attempted to use interactive executor for '${language}' but no such executor exists`);
 			return new interactiveExecutors[language](this.plugin.settings, file);

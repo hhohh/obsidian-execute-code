@@ -69,6 +69,8 @@ async function handleExecution(block: CodeBlockContext) {
         case "c": return runCode(s.clingPath, s.clingArgs, "c", block, { shell: true });
         case "ruby": return runCode(s.rubyPath, s.rubyArgs, s.rubyFileExtension, block, { shell: true });
         case "sql": return runCode(s.sqlPath, s.sqlArgs, "sql", block, { shell: true });
+        case "sql-duckdb": return runCode(s.sqlDuckdbPath, s.sqlDuckdbArgs, "sql", block, { shell: true });
+        case "sql-odps": return runCode(s.sqlOdpsPath, s.sqlOdpsArgs, "sql", block, { shell: true });
         case "octave": return runCode(s.octavePath, s.octaveArgs, s.octaveFileExtension, block, { shell: true, transform: (code) => macro.expandOctavePlot(code) });
         case "maxima": return runCode(s.maximaPath, s.maximaArgs, s.maximaFileExtension, block, { shell: true, transform: (code) => macro.expandMaximaPlot(code) });
         case "racket": return runCode(s.racketPath, s.racketArgs, s.racketFileExtension, block, { shell: true });
@@ -116,11 +118,17 @@ export function addToAllCodeBlocks(
     plugin: PluginContext,
     context?: MarkdownPostProcessorContext
 ) {
+    // In Live Preview, CodeMirror assigns 'language-sql' to sql-duckdb/sql-odps blocks.
+    // Parse the source to get actual language+source pairs for SQL blocks.
+    const editorContent = view.editor?.getValue() ?? '';
+    const sqlBlockEntries = editorContent ? parseSqlBlockEntries(editorContent) : [];
+    const consumed = new Set<number>();
+
     const codeBlocks = Array.from(element.getElementsByTagName("code"));
     codeBlocks.forEach((codeBlock: HTMLElement, index: number) => {
         addToCodeBlock(
             element, codeBlock, file, view, plugin, context,
-            index
+            index, sqlBlockEntries, consumed
         );
     });
 }
@@ -136,7 +144,9 @@ export function addToAllCodeBlocks(
  * @param blockIndex The index of the code block in the current processing context.
  */
 function addToCodeBlock(element: HTMLElement, codeBlock: HTMLElement, file: string, view: MarkdownView, plugin: PluginContext, context: MarkdownPostProcessorContext,
-    blockIndex: number = 0
+    blockIndex: number = 0,
+    sqlBlockEntries: SqlBlockEntry[] = [],
+    consumed: Set<number> = new Set()
 ) {
     if (codeBlock.className.match(/^language-\{\w+/i)) {
         codeBlock.className = codeBlock.className.replace(/^language-\{(\w+)/i, "language-$1 {");
@@ -154,9 +164,17 @@ function addToCodeBlock(element: HTMLElement, codeBlock: HTMLElement, file: stri
     const srcCode = codeBlock.getText();
     let sanitizedClassList = sanitizeClassListOfCodeBlock(codeBlock);
 
-    const canonicalLanguage = getLanguageAlias(
-        supportedLanguages.find(lang => sanitizedClassList.contains(`language-${lang}`))
-    ) as LanguageId;
+    // Check data-exec-lang attribute first (sql dialect blocks rendered as 'sql' for highlighting)
+    const dataLangAttr = codeBlock.getAttribute('data-exec-lang');
+    const aliasedDataLang = dataLangAttr ? getLanguageAlias(dataLangAttr) : undefined;
+    let canonicalLanguage: LanguageId;
+    if (aliasedDataLang) {
+        canonicalLanguage = aliasedDataLang;
+    } else {
+        canonicalLanguage = getLanguageAlias(
+            supportedLanguages.find(lang => sanitizedClassList.contains(`language-${lang}`))
+        ) as LanguageId;
+    }
 
     const isLanguageSupported: Boolean = canonicalLanguage !== undefined;
     const hasBlockBeenButtonifiedAlready = parent.classList.contains(codeBlockHasButtonClass);
@@ -165,9 +183,35 @@ function addToCodeBlock(element: HTMLElement, codeBlock: HTMLElement, file: stri
     const sectionInfo = context ? context.getSectionInfo(element) : null;
     const sectionStartLine = sectionInfo ? sectionInfo.lineStart : 0;
 
-    // Find index of this specific code block within its section
-    const blocksInSection = Array.from(element.querySelectorAll('code[class*="language-"]'));
-    const relativeIndex = blocksInSection.indexOf(codeBlock);
+    // Find index of this specific code block within its section.
+    // For SQL, count only SQL blocks so the index matches findCodeBlockEndLineInContent's counting.
+    const langBlocks = Array.from(element.querySelectorAll('code[class*="language-"]'));
+    let relativeIndex: number;
+    if (canonicalLanguage === 'sql' || canonicalLanguage === 'sql-duckdb' || canonicalLanguage === 'sql-odps') {
+        const sqlBlockClasses = new Set([
+            'language-sql', 'language-run-sql', 'language-duckdb',
+            'language-sql-duckdb', 'language-run-sql-duckdb',
+            'language-sql-odps', 'language-run-sql-odps'
+        ]);
+        const sqlBlocks = langBlocks.filter(b => {
+            const classes = b.className.toLowerCase().split(/\s+/);
+            return classes.some(c => sqlBlockClasses.has(c));
+        });
+        relativeIndex = sqlBlocks.indexOf(codeBlock);
+        if (relativeIndex === -1) relativeIndex = 0;
+    } else {
+        relativeIndex = langBlocks.indexOf(codeBlock);
+    }
+
+    // In Live Preview, CodeMirror assigns 'language-sql' to all SQL dialects.
+    // Match by source code content against parsed SQL entries to detect the real dialect.
+    if ((canonicalLanguage === 'sql' || !canonicalLanguage) && sqlBlockEntries.length > 0) {
+        const dialect = consumeSqlEntry(sqlBlockEntries, consumed, srcCode);
+        if (dialect && dialect !== 'sql') {
+            const aliased = getLanguageAlias(dialect);
+            if (aliased) canonicalLanguage = aliased as LanguageId;
+        }
+    }
 
     const outputter = new Outputter(
         codeBlock, plugin.settings, view, plugin.app, file, canonicalLanguage,
@@ -208,6 +252,61 @@ function addToCodeBlock(element: HTMLElement, codeBlock: HTMLElement, file: stri
     };
 
     button.addEventListener("click", () => handleExecution(block));
+}
+
+interface SqlBlockEntry {
+	source: string;
+	language: string;
+}
+
+/**
+ * Parse markdown source to find actual language+source of each SQL code block.
+ * In Live Preview, CodeMirror assigns 'language-sql' to sql-duckdb/sql-odps blocks,
+ * so we match by source code to determine the true dialect.
+ */
+function parseSqlBlockEntries(content: string): SqlBlockEntry[] {
+	const result: SqlBlockEntry[] = [];
+	const lines = content.split('\n');
+	let inside = false;
+	let currentSource = '';
+	let currentLang = '';
+
+	for (const line of lines) {
+		if (line.startsWith('```')) {
+			if (inside) {
+				result.push({ source: currentSource.trimEnd(), language: currentLang });
+				inside = false;
+				currentSource = '';
+			} else {
+				const m = line.match(/^```\s*(?:run-)?(sql(?:-duckdb|-odps)?|duckdb)\b/i);
+				if (m) {
+					let lang = m[1].toLowerCase();
+					if (lang === 'duckdb') lang = 'sql-duckdb';
+					currentLang = lang;
+					inside = true;
+				}
+			}
+		} else if (inside) {
+			currentSource += line + '\n';
+		}
+	}
+	return result;
+}
+
+/**
+ * Consume and return the language for a matching SQL block entry.
+ * Uses source code matching with consumption tracking to handle duplicates.
+ */
+function consumeSqlEntry(entries: SqlBlockEntry[], consumed: Set<number>, srcCode: string): string | undefined {
+	const needle = srcCode.trim();
+	for (let i = 0; i < entries.length; i++) {
+		if (consumed.has(i)) continue;
+		if (entries[i].source.trim() === needle) {
+			consumed.add(i);
+			return entries[i].language;
+		}
+	}
+	return undefined;
 }
 
 /**
@@ -255,7 +354,7 @@ function runCode(cmd: string, cmdArgs: string, ext: string, block: CodeBlockCont
         }
 
         // For SQL, finalize the output to render VTable
-        if (block.language === 'sql') {
+        if (block.language === 'sql' || block.language === 'sql-duckdb' || block.language === 'sql-odps') {
             block.outputter.finalizeSqlOutput();
         }
     });
