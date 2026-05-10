@@ -7,6 +7,36 @@
 
 </div>
 
+## Fork Changes 🔀
+
+This repository is a fork of [twibiral/obsidian-execute-code](https://github.com/twibiral/obsidian-execute-code) with the following enhancements:
+
+### New SQL Dialect Support
+- **DuckDB**: Added `sql-duckdb` language support with dedicated executor and settings. You can now execute DuckDB SQL queries directly in your notes by specifying `sql-duckdb` as the code block language.
+- **ODPS (MaxCompute)**: Added `sql-odps` language support with dedicated executor and settings. Use `sql-odps` code blocks to run queries against Alibaba Cloud MaxCompute.
+
+### Fix Live Preview Dialect Detection
+- Fixed an issue where the Live Preview mode failed to correctly detect SQL dialects in code blocks with `run-` prefix (e.g., `run-sql-duckdb`, `run-sql-odps`).
+
+### Interactive VTable Display
+- SQL query results are rendered using an interactive VTable (VisActor) component, featuring scrolling, sorting, column resizing, and automatic dark/light theme adaptation.
+- Export buttons allow downloading results as CSV or Excel files directly from the table.
+
+### SQL Result Persistence
+- After executing a SQL code block, the result set is automatically saved as a `vtable` code block appended to the note, ensuring results persist across sessions and Obsidian restarts.
+- Supports both CSV (new) and JSON (legacy) persistence formats.
+
+### SQL Output Parsing
+- Added `SqlResultParser` for structured parsing and display of SQL query results.
+
+### Code Changes Summary
+- 14 files changed, 370 insertions, 135 deletions
+- Refactored `ExecutorContainer` to support dynamic language-to-executor mapping
+- Added per-language settings for DuckDB and ODPS paths
+- Added CSS styles for new SQL output display
+
+---
+
 This plugin allows you to execute code snippets in code blocks in your notes. The plugin adds a 'run' button for code blocks in supported languages. Clicking them results in the code of the block being executed locally. After the execution the result of the execution is shown. An interactive input element is created when your code snippets reads expects user input.
 
 The result is shown only after the execution is finished. It is not possible to enter text on the command line into the executed program now.
